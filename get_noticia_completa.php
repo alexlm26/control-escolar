@@ -1,25 +1,26 @@
 <?php
-include "conexion.php";
+include "../conexion.php";
 
 if (session_status() == PHP_SESSION_NONE) {
     session_start();
 }
 
-if (!isset($_GET['id'])) {
-    echo json_encode(['error' => 'ID de noticia no proporcionado']);
+// Verificar que los parámetros existen
+if (!isset($_GET['id']) || !isset($_GET['id_usuario'])) {
+    http_response_code(400);
+    echo json_encode(['error' => 'Parámetros faltantes']);
     exit;
 }
 
-$id_noticia = $_GET['id'];
-$id_usuario = isset($_SESSION['id_usuario']) ? $_SESSION['id_usuario'] : 0;
+$id_noticia = intval($_GET['id']);
+$id_usuario = intval($_GET['id_usuario']);
 
+// Preparar y ejecutar la consulta
 $query = $conexion->prepare("
     SELECT n.*, 
            u.nombre AS nombre_usuario, 
            u.apellidos AS apellidos_usuario, 
            u.rol AS rol_usuario,
-           CONCAT(u.nombre, ' ', u.apellidos) AS nombre_completo,
-           DATE_FORMAT(n.publicacion, '%d/%m/%Y a las %H:%i') AS fecha_formateada,
            IF(l.id_usuario IS NULL, 0, 1) AS dio_like
     FROM noticias n
     JOIN usuario u ON n.id_usuario = u.id_usuario
@@ -28,29 +29,44 @@ $query = $conexion->prepare("
     WHERE n.id_noticia = ?
 ");
 
+if (!$query) {
+    http_response_code(500);
+    echo json_encode(['error' => 'Error en la preparación de la consulta: ' . $conexion->error]);
+    exit;
+}
+
 $query->bind_param("ii", $id_usuario, $id_noticia);
 $query->execute();
 $result = $query->get_result();
 
-if ($result->num_rows > 0) {
-    $noticia = $result->fetch_assoc();
-    
-    // Formatear datos para la respuesta
-    $respuesta = [
-        'titulo' => $noticia['titulo'],
-        'imagen' => $noticia['imagen'],
-        'info' => $noticia['info'],
-        'fecha' => $noticia['fecha_formateada'],
-        'autor' => $noticia['nombre_usuario'] . ' ' . $noticia['apellidos_usuario'],
-        'nombre_completo' => $noticia['nombre_completo'],
-        'rol' => $noticia['rol_usuario'] == 1 ? 'Alumno' : ($noticia['rol_usuario'] == 2 ? 'Profesor' : 'Coordinador'),
-        'visitas' => $noticia['visitas'],
-        'likes' => $noticia['likes'],
-        'dio_like' => $noticia['dio_like']
-    ];
-    
-    echo json_encode($respuesta);
-} else {
+if ($result->num_rows === 0) {
+    http_response_code(404);
     echo json_encode(['error' => 'Noticia no encontrada']);
+    exit;
 }
+
+$noticia = $result->fetch_assoc();
+
+// Determinar nombre del rol
+$rol_nombre = 'Desconocido';
+switch($noticia['rol_usuario']){
+    case 1: $rol_nombre = 'Alumno'; break;
+    case 2: $rol_nombre = 'Profesor'; break;
+    case 3: $rol_nombre = 'Coordinador'; break;
+}
+
+header('Content-Type: application/json');
+echo json_encode([
+    'titulo' => $noticia['titulo'],
+    'imagen' => $noticia['imagen'],
+    'info' => $noticia['info'],
+    'publicacion' => $noticia['publicacion'],
+    'nombre_usuario' => $noticia['nombre_usuario'],
+    'apellidos_usuario' => $noticia['apellidos_usuario'],
+    'rol_nombre' => $rol_nombre,
+    'likes' => $noticia['likes'],
+    'dio_like' => $noticia['dio_like']
+]);
+
+$query->close();
 ?>
